@@ -232,3 +232,87 @@
       margin-bottom: 15px;
       opacity: 0.5;
     }
+
+    .material-type-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+
+    .material-type-badge.scrap {
+      background: rgba(255, 193, 7, 0.3);
+      color: #ffe082;
+      border: 1px solid rgba(255, 193, 7, 0.5);
+    }
+
+    .material-type-badge.raw {
+      background: rgba(76, 175, 80, 0.3);
+      color: #a5d6a7;
+      border: 1px solid rgba(76, 175, 80, 0.5);
+    }
+
+    .algo-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .algo-tab {
+      flex: 1;
+      min-width: 120px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.85);
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .algo-tab:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .algo-tab.active {
+      background: rgba(255, 255, 255, 0.95);
+      color: #764ba2;
+      border-color: white;
+      transform: translateY(-1px);
+    }
+
+    .algo-desc {
+      font-size: 12px;
+      opacity: 0.8;
+      margin-bottom: 15px;
+      min-height: 16px;
+    }
+
+    .remaining-scraps {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .scrap-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .scrap-chip {
+      display: inline-block;
+      padding: 5px 10px;
+      background: rgba(255, 193, 7, 0.25);
+      border: 1px solid rgba(255, 193, 7, 0.5);
+      border-radius: 6px;
+      font-size: 12px;
+      color: #ffe082;
+    }

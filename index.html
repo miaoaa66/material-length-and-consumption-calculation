@@ -71,17 +71,67 @@
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-title">📦 散料列表（可利用余料）</div>
+      <div class="form-group">
+        <label>散料长度：</label>
+        <input type="number" v-model.number="newScrapLength" placeholder="请输入散料长度" min="1" step="0.1">
+        <span>毫米</span>
+        <label style="width: 80px; text-align: right;">数量：</label>
+        <input type="number" v-model.number="newScrapCount" placeholder="数量" min="1" step="1"
+          style="max-width: 100px;">
+        <span>根</span>
+        <button class="add-btn" @click="addScrapMaterial">添加</button>
+      </div>
+
+      <div class="material-list" v-if="scrapMaterials.length > 0">
+        <div class="material-item" v-for="(item, index) in scrapMaterials" :key="index">
+          <span>{{ item.length.toFixed(1) }} 毫米 × {{ item.count }} 根</span>
+          <button @click="removeScrapMaterial(index)">删除</button>
+        </div>
+      </div>
+
+      <div class="empty-state" v-else>
+        <div>暂无散料</div>
+        <div style="font-size: 14px; margin-top: 5px;">添加已有余料，系统将优先使用散料以节省整料</div>
+      </div>
+
+      <div style="margin-top: 15px; display: flex; justify-content: flex-end;">
+        <input ref="scrapFileInput" type="file" id="scrapFileInput" class="file-input" accept=".xlsx,.xls"
+          @change="importScrapExcel">
+        <button class="import-export-btn" @click="$refs.scrapFileInput.click()">📥 导入散料Excel</button>
+      </div>
+    </div>
+
     <div class="result-section" v-if="materials.length > 0 && rawMaterialLength > 0">
       <div class="result-title">🎯 计算结果</div>
+
+      <div class="algo-tabs">
+        <div v-for="algo in algorithms" :key="algo.key"
+          class="algo-tab" :class="{ active: algorithm === algo.key }"
+          @click="algorithm = algo.key">
+          {{ algo.label }}
+        </div>
+      </div>
+      <div class="algo-desc">{{ (algorithms.find(a => a.key === algorithm) || {}).desc }}</div>
+
       <div class="result-value">{{ totalRawNeeded }}</div>
-      <div class="result-unit">根{{materialName}}</div>
+      <div class="result-unit">根{{materialName}}（整料）</div>
+      <div v-if="totalScrapUsed > 0" style="font-size: 14px; opacity: 0.95; margin-top: 8px;">
+        另使用散料 {{ totalScrapUsed }} / {{ totalScrapAvailable }} 根
+      </div>
+      <div v-if="unplacedCount > 0" style="font-size: 13px; color: #ffd6d6; margin-top: 8px;">
+        ⚠ 有 {{ unplacedCount }} 根材料超出可用长度，无法切割
+      </div>
       <div style="font-size: 12px; opacity: 0.8; margin-top: 10px;">(已考虑每根预留 {{ reserveError }} 毫米误差)</div>
 
       <div class="cut-detail">
         <h3>📋 切割方案详情</h3>
         <div class="cut-detail-item" v-for="(plan, index) in cutPlan" :key="index">
           <span class="num">{{ index + 1 }}</span>
-          <span>第 {{ index + 1 }} 根{{materialName}}</span>
+          <span class="material-type-badge" :class="plan.type">
+            {{ plan.type === 'scrap' ? '散料' : '整料' }} {{ plan.sourceLength.toFixed(0) }}mm
+          </span>
           <span class="waste">余料: {{ plan.waste.toFixed(1) }}mm</span>
           <span class="used">已用: {{ plan.used.toFixed(1) }}mm</span>
           <div style="clear: both; font-size: 12px; opacity: 0.8; margin-top: 5px; padding-left: 35px;">
@@ -95,6 +145,15 @@
           <span>总余料: {{ totalWaste.toFixed(1) }}mm</span>
           <span>总损耗: {{ totalCutLoss.toFixed(1) }}mm</span>
           <span style="float: left;">总使用材料: {{ totalUsed.toFixed(1) }}mm</span>
+        </div>
+
+        <div class="remaining-scraps" v-if="unusedScraps.length > 0">
+          <h3 style="margin-top: 15px;">📦 未使用的散料（本次方案未动用）</h3>
+          <div class="scrap-chips">
+            <span class="scrap-chip" v-for="(s, i) in unusedScraps" :key="i">
+              {{ s.length.toFixed(1) }}mm × {{ s.count }}根
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -111,12 +170,27 @@
           reserveError: 10,
           newMaterialLength: null,
           newMaterialCount: 1,
-          materials: []
+          materials: [],
+          newScrapLength: null,
+          newScrapCount: 1,
+          scrapMaterials: [],
+          algorithm: 'FFD',
+          algorithms: [
+            { key: 'FFD', label: '首次适应 FFD', desc: '每根料尽量装满再换下一根' },
+            { key: 'BFD', label: '最佳适应 BFD', desc: '装入剩余空间最接近的料，余料更集中' },
+            { key: 'NFD', label: '下次适应 NFD', desc: '只装当前料，装不下即换新料' }
+          ]
         }
       },
       computed: {
         totalRawNeeded() {
-          return this.cutPlan.length;
+          return this.cutPlan.filter(p => p.type === 'raw').length;
+        },
+        totalScrapUsed() {
+          return this.cutPlan.filter(p => p.type === 'scrap').length;
+        },
+        totalScrapAvailable() {
+          return this.scrapMaterials.reduce((sum, s) => sum + (s.count > 0 ? s.count : 0), 0);
         },
         totalUsed() {
           return this.cutPlan.reduce((sum, plan) => sum + plan.used, 0);
@@ -128,6 +202,11 @@
           const totalCuts = this.cutPlan.reduce((sum, plan) => sum + plan.cuts.length - 1, 0);
           return totalCuts * this.cutLoss;
         },
+        unplacedCount() {
+          const placed = this.cutPlan.reduce((sum, plan) => sum + plan.cuts.length, 0);
+          const total = this.materials.reduce((sum, m) => sum + (m.count > 0 ? m.count : 0), 0);
+          return total - placed;
+        },
         cutPlan() {
           if (this.materials.length === 0 || this.rawMaterialLength <= 0) {
             return [];
@@ -136,57 +215,211 @@
           const lossPerCut = this.cutLoss;
           const reserve = this.reserveError;
           const rawLength = this.rawMaterialLength - reserve;
+          const rawSourceLength = this.rawMaterialLength;
 
+          // 构建待切割件列表（降序）
           const pieces = [];
           this.materials.forEach(item => {
             if (item.length > 0 && item.count > 0) {
+              for (let i = 0; i < item.count; i++) pieces.push(item.length);
+            }
+          });
+          pieces.sort((a, b) => b - a);
+
+          // 构建散料库存（降序，优先用长散料）
+          const scrapStocks = [];
+          this.scrapMaterials.forEach(item => {
+            if (item.length > 0 && item.count > 0) {
               for (let i = 0; i < item.count; i++) {
-                pieces.push(item.length);
+                const cap = item.length - reserve;
+                if (cap > 0) scrapStocks.push({ type: 'scrap', sourceLength: item.length, capacity: cap });
               }
             }
           });
+          scrapStocks.sort((a, b) => b.capacity - a.capacity);
 
-          pieces.sort((a, b) => b - a);
-
-          const plan = [];
-          const used = new Array(pieces.length).fill(false);
-
-          while (true) {
-            let remaining = rawLength;
-            const cutsLengths = [];
-            let foundAny = false;
-
-            for (let i = 0; i < pieces.length; i++) {
-              if (used[i]) continue;
-
-              const cutsSoFar = cutsLengths.length;
-              const totalLoss = cutsSoFar * lossPerCut;
-
-              if (pieces[i] + totalLoss <= remaining) {
-                cutsLengths.push(pieces[i]);
-                used[i] = true;
-                foundAny = true;
-                remaining -= pieces[i] + (cutsLengths.length > 1 ? lossPerCut : 0);
+          const ctx = { pieces, scrapStocks, rawLength, rawSourceLength, lossPerCut, reserve };
+          if (this.algorithm === 'BFD') return this.packBFD(ctx);
+          if (this.algorithm === 'NFD') return this.packNFD(ctx);
+          return this.packFFD(ctx);
+        },
+        unusedScraps() {
+          // 本次方案未使用的散料（一根件都没装上的散料）
+          const usedScrapLengths = this.cutPlan
+            .filter(p => p.type === 'scrap')
+            .map(p => p.sourceLength);
+          const remaining = [];
+          const usedCopy = [...usedScrapLengths];
+          this.scrapMaterials.forEach(item => {
+            let unused = item.count;
+            for (let i = 0; i < usedCopy.length; i++) {
+              if (Math.abs(usedCopy[i] - item.length) < 0.001) {
+                usedCopy.splice(i, 1);
+                unused--;
+                i--;
               }
             }
-
-            if (!foundAny) break;
-
-            const actualUsed = cutsLengths.reduce((sum, cut) => sum + cut, 0) + (cutsLengths.length - 1) * lossPerCut;
-
-            const planCutLoss = (cutsLengths.length - 1) * lossPerCut;
-            plan.push({
-              used: actualUsed,
-              waste: rawLength - actualUsed,
-              cuts: cutsLengths,
-              cutLoss: planCutLoss
-            });
-          }
-
-          return plan;
+            if (unused > 0) remaining.push({ length: item.length, count: unused });
+          });
+          return remaining;
         }
       },
       methods: {
+        // 构建切割方案条目的通用方法
+        buildPlanItem(stock, lossPerCut) {
+          const cuts = stock.cuts;
+          const actualUsed = cuts.reduce((sum, c) => sum + c, 0) + (cuts.length - 1) * lossPerCut;
+          return {
+            type: stock.type,
+            sourceLength: stock.sourceLength,
+            used: actualUsed,
+            waste: stock.capacity - actualUsed,
+            cuts: cuts,
+            cutLoss: (cuts.length - 1) * lossPerCut
+          };
+        },
+        // FFD 首次适应：逐根料装填，每根尽量装满再换下一根
+        packFFD(ctx) {
+          const { pieces, scrapStocks, rawLength, rawSourceLength, lossPerCut } = ctx;
+          const plan = [];
+          const used = new Array(pieces.length).fill(false);
+          let scrapIdx = 0;
+
+          const fillStock = (stock) => {
+            for (let i = 0; i < pieces.length; i++) {
+              if (used[i]) continue;
+              const additionalLoss = stock.cuts.length > 0 ? lossPerCut : 0;
+              if (pieces[i] + additionalLoss <= stock.remaining) {
+                stock.cuts.push(pieces[i]);
+                used[i] = true;
+                stock.remaining -= pieces[i] + additionalLoss;
+              }
+            }
+          };
+
+          // 散料优先
+          while (scrapIdx < scrapStocks.length) {
+            const s = scrapStocks[scrapIdx++];
+            const stock = { type: s.type, sourceLength: s.sourceLength, capacity: s.capacity, remaining: s.capacity, cuts: [] };
+            fillStock(stock);
+            if (stock.cuts.length > 0) plan.push(this.buildPlanItem(stock, lossPerCut));
+          }
+
+          // 整料
+          while (true) {
+            const stock = { type: 'raw', sourceLength: rawSourceLength, capacity: rawLength, remaining: rawLength, cuts: [] };
+            fillStock(stock);
+            if (stock.cuts.length === 0) break;
+            plan.push(this.buildPlanItem(stock, lossPerCut));
+          }
+          return plan;
+        },
+        // BFD 最佳适应：按件处理，每件装入剩余空间最小且能装下的料
+        packBFD(ctx) {
+          const { pieces, scrapStocks, rawLength, rawSourceLength, lossPerCut } = ctx;
+          const plan = [];
+          const used = new Array(pieces.length).fill(false);
+          const openStocks = []; // 已开的料（散料+整料），可继续装
+          let scrapIdx = 0;
+
+          const openNewStock = () => {
+            if (scrapIdx < scrapStocks.length) {
+              const s = scrapStocks[scrapIdx++];
+              openStocks.push({ type: s.type, sourceLength: s.sourceLength, capacity: s.capacity, remaining: s.capacity, cuts: [] });
+              return openStocks[openStocks.length - 1];
+            }
+            const stock = { type: 'raw', sourceLength: rawSourceLength, capacity: rawLength, remaining: rawLength, cuts: [] };
+            openStocks.push(stock);
+            return stock;
+          };
+
+          for (let i = 0; i < pieces.length; i++) {
+            const piece = pieces[i];
+            // 在已开的料中找最佳适应（剩余空间最小且能装下）
+            let bestIdx = -1;
+            let bestAfter = Infinity;
+            for (let j = 0; j < openStocks.length; j++) {
+              const s = openStocks[j];
+              const additionalLoss = s.cuts.length > 0 ? lossPerCut : 0;
+              if (piece + additionalLoss <= s.remaining) {
+                const after = s.remaining - piece - additionalLoss;
+                if (after < bestAfter) {
+                  bestAfter = after;
+                  bestIdx = j;
+                }
+              }
+            }
+            let stock;
+            if (bestIdx === -1) {
+              stock = openNewStock();
+              const additionalLoss = stock.cuts.length > 0 ? lossPerCut : 0;
+              if (piece + additionalLoss <= stock.remaining) {
+                stock.cuts.push(piece);
+                stock.remaining -= piece + additionalLoss;
+                used[i] = true;
+              }
+              // 装不下（件比整料还长）则跳过，标记未用
+            } else {
+              stock = openStocks[bestIdx];
+              const additionalLoss = stock.cuts.length > 0 ? lossPerCut : 0;
+              stock.cuts.push(piece);
+              stock.remaining -= piece + additionalLoss;
+              used[i] = true;
+            }
+          }
+
+          // 只输出有件的料
+          openStocks.forEach(s => {
+            if (s.cuts.length > 0) plan.push(this.buildPlanItem(s, lossPerCut));
+          });
+          return plan;
+        },
+        // NFD 下次适应：只用当前料，装不下即换下一根，不回头
+        packNFD(ctx) {
+          const { pieces, scrapStocks, rawLength, rawSourceLength, lossPerCut } = ctx;
+          const plan = [];
+          const used = new Array(pieces.length).fill(false);
+          let scrapIdx = 0;
+          let current = null;
+
+          const nextStock = () => {
+            if (current && current.cuts.length > 0) plan.push(this.buildPlanItem(current, lossPerCut));
+            if (scrapIdx < scrapStocks.length) {
+              const s = scrapStocks[scrapIdx++];
+              current = { type: s.type, sourceLength: s.sourceLength, capacity: s.capacity, remaining: s.capacity, cuts: [] };
+            } else {
+              current = { type: 'raw', sourceLength: rawSourceLength, capacity: rawLength, remaining: rawLength, cuts: [] };
+            }
+          };
+
+          nextStock();
+
+          for (let i = 0; i < pieces.length; i++) {
+            const piece = pieces[i];
+            let placed = false;
+            const additionalLoss = current.cuts.length > 0 ? lossPerCut : 0;
+            if (piece + additionalLoss <= current.remaining) {
+              current.cuts.push(piece);
+              current.remaining -= piece + additionalLoss;
+              used[i] = true;
+              placed = true;
+            }
+            if (!placed) {
+              // 当前料装不下，换下一根
+              nextStock();
+              const addLoss = current.cuts.length > 0 ? lossPerCut : 0;
+              if (piece + addLoss <= current.remaining) {
+                current.cuts.push(piece);
+                current.remaining -= piece + addLoss;
+                used[i] = true;
+              }
+            }
+          }
+
+          // 收尾：把最后一根有件的料入栈
+          if (current && current.cuts.length > 0) plan.push(this.buildPlanItem(current, lossPerCut));
+          return plan;
+        },
         addMaterial() {
           if (this.newMaterialLength && this.newMaterialLength > 0) {
             const count = this.newMaterialCount && this.newMaterialCount > 0 ? this.newMaterialCount : 1;
@@ -236,6 +469,62 @@
               });
 
               alert('导入成功！');
+            } catch (error) {
+              alert('导入失败，请确保Excel格式正确：第一列是长度(毫米)，第二列是数量');
+              console.error(error);
+            }
+          };
+          reader.readAsArrayBuffer(file);
+          event.target.value = '';
+        },
+        addScrapMaterial() {
+          if (this.newScrapLength && this.newScrapLength > 0) {
+            const count = this.newScrapCount && this.newScrapCount > 0 ? this.newScrapCount : 1;
+            const existing = this.scrapMaterials.find(m => Math.abs(m.length - this.newScrapLength) < 0.001);
+            if (existing) {
+              existing.count += count;
+            } else {
+              this.scrapMaterials.push({
+                length: this.newScrapLength,
+                count: count
+              });
+            }
+            this.newScrapLength = null;
+            this.newScrapCount = 1;
+          }
+        },
+        removeScrapMaterial(index) {
+          this.scrapMaterials.splice(index, 1);
+        },
+        importScrapExcel(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const data = new Uint8Array(e.target.result);
+              const workbook = XLSX.read(data, { type: 'array' });
+              const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+              const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: ['length', 'count'] });
+
+              jsonData.forEach((row, index) => {
+                if (index === 0 && typeof row.length === 'string' && row.length.includes('长度')) return;
+
+                const length = parseFloat(row.length);
+                const count = parseInt(row.count) || 1;
+
+                if (!isNaN(length) && length > 0 && count > 0) {
+                  const existing = this.scrapMaterials.find(m => Math.abs(m.length - length) < 0.01);
+                  if (existing) {
+                    existing.count += count;
+                  } else {
+                    this.scrapMaterials.push({ length, count });
+                  }
+                }
+              });
+
+              alert('散料导入成功！');
             } catch (error) {
               alert('导入失败，请确保Excel格式正确：第一列是长度(毫米)，第二列是数量');
               console.error(error);
